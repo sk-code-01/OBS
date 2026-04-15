@@ -1,0 +1,32 @@
+{
+  "name": "@clawobs/ingest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/server.ts",
+    "start": "node --env-file=../../.env dist/server.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "vitest run test/e2e.test.ts",
+    "load": "tsx --env-file=../../.env test/load.ts"
+  },
+  "dependencies": {
+    "@clawobs/clickhouse-schema": "workspace:*",
+    "@clawobs/types": "workspace:*",
+    "@clickhouse/client": "^1.10.0",
+    "@fastify/swagger": "^9.4.0",
+    "@fastify/swagger-ui": "^5.2.1",
+    "fastify": "^5.2.1",
+    "fastify-type-provider-zod": "^4.0.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.8"
+  }
+}

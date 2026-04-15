@@ -1,0 +1,39 @@
+{
+  "name": "@clawobs/plugin-openclaw",
+  "version": "0.1.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": ["dist", "openclaw.plugin.json", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@clawobs/types": "workspace:*"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.14"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "openclaw": "2026.4.14",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.8"
+  },
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "compat": {
+      "pluginApi": ">=2026.4.14",
+      "minGatewayVersion": "2026.4.14"
+    },
+    "build": {
+      "openclawVersion": "2026.4.14",
+      "pluginSdkVersion": "2026.4.14"
+    }
+  }
+}

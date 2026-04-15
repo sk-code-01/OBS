@@ -1,0 +1,59 @@
+{
+  "id": "clawobs",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ingestUrl": {
+        "type": "string",
+        "description": "ClawObs ingest endpoint, e.g. http://localhost:4317 or your hosted API."
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "Bearer token for the ClawObs ingest API."
+      },
+      "sdkVersion": {
+        "type": "string",
+        "description": "Optional override for the sender version tag."
+      },
+      "flushAt": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Flush after this many completed spans are buffered."
+      },
+      "flushIntervalMs": {
+        "type": "integer",
+        "minimum": 100,
+        "description": "Flush on this interval even when the queue is small."
+      },
+      "requestTimeoutMs": {
+        "type": "integer",
+        "minimum": 500,
+        "description": "HTTP timeout for one ingest request."
+      },
+      "maxQueueSize": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum buffered completed spans before new ones are dropped."
+      },
+      "sampleRate": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Per-run sampling rate. 1 records every run."
+      },
+      "captureInputs": {
+        "type": "boolean",
+        "description": "Include prompts, tool args, and agent inputs."
+      },
+      "captureOutputs": {
+        "type": "boolean",
+        "description": "Include model/tool outputs and final agent transcript output."
+      },
+      "captureMessages": {
+        "type": "boolean",
+        "description": "Include full message arrays on agent/LLM spans instead of summaries only."
+      }
+    }
+  }
+}
