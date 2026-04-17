@@ -43,7 +43,7 @@ export async function issueKey(projectId: string, name: string): Promise<{ rawKe
 export async function listKeys(projectId: string): Promise<ApiKeyRecord[]> {
   const result = await clickhouse.query({
     query:
-      "SELECT lower(hex(key_hash)) AS key_hash, prefix, name, " +
+      "SELECT toString(key_hash) AS key_hash, prefix, name, " +
       "toString(created_at) AS created_at, " +
       "if(isNull(revoked_at), NULL, toString(revoked_at)) AS revoked_at " +
       "FROM api_keys FINAL WHERE project_id = {projectId:UUID} " +
