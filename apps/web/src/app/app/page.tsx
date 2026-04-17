@@ -34,7 +34,7 @@ export default async function DashboardOverviewPage(): Promise<React.JSX.Element
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Trace</TableHead>
+                  <TableHead>Conversation</TableHead>
                   <TableHead>Session</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>LLM</TableHead>

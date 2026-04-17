@@ -18,9 +18,7 @@ export function getClickhouse(): ClickHouseClient {
     password: config.CLICKHOUSE_PASSWORD,
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    globalThis.__clawobsClickHouseClient = client;
-  }
+  globalThis.__clawobsClickHouseClient = client;
 
   return client;
 }

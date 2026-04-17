@@ -26,13 +26,13 @@ export function TracesLive({ initial }: { initial: TraceListResponse }): React.J
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border/70">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Trace</TableHead>
-            <TableHead>Session</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>LLM</TableHead>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Conversation</TableHead>
+              <TableHead>Session</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>LLM</TableHead>
             <TableHead>Tools</TableHead>
             <TableHead>Tokens</TableHead>
             <TableHead>Cost</TableHead>

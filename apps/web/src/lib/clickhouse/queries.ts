@@ -10,6 +10,9 @@ export interface TraceSummary {
   toolCallCount: number;
   totalTokens: number | null;
   totalCostUsd: number | null;
+  conversationPreview: string | null;
+  senderName: string | null;
+  messageAt: string | null;
 }
 
 export interface TraceListParams {
@@ -54,6 +57,12 @@ export interface Overview {
   totalCostUsd: number | null;
   avgDurationMs: number | null;
   p95DurationMs: number | null;
+}
+
+interface ConversationContext {
+  conversationPreview: string | null;
+  senderName: string | null;
+  messageAt: string | null;
 }
 
 export async function listTraces(
@@ -103,7 +112,10 @@ export async function listTraces(
   });
 
   const rows = (await result.json()) as Array<Record<string, unknown>>;
-  const items = rows.map(mapTraceSummaryRow);
+  const items = await enrichTraceSummariesWithConversationContext(
+    projectId,
+    rows.map(mapTraceSummaryRow),
+  );
   return {
     items,
     nextCursor: items.length === (params.limit ?? 50) ? items.at(-1)?.startedAt ?? null : null,
@@ -148,8 +160,9 @@ export async function getTrace(projectId: string, traceId: string): Promise<Trac
 
   const traceRows = (await traceResult.json()) as Array<Record<string, unknown>>;
   const spanRows = (await spansResult.json()) as Array<Record<string, unknown>>;
+  const conversationContext = extractConversationContextFromSpanRows(spanRows);
   return {
-    trace: traceRows[0] ? mapTraceSummaryRow(traceRows[0]) : null,
+    trace: traceRows[0] ? { ...mapTraceSummaryRow(traceRows[0]), ...conversationContext } : null,
     spans: spanRows.map(mapSpanRow),
   };
 }
@@ -211,6 +224,9 @@ function mapTraceSummaryRow(row: Record<string, unknown>): TraceSummary {
     toolCallCount: numberOrZero(row.tool_call_count),
     totalTokens: numberOrNull(row.total_tokens),
     totalCostUsd: numberOrNull(row.total_cost_usd),
+    conversationPreview: stringOrNull(row.conversation_preview),
+    senderName: stringOrNull(row.sender_name),
+    messageAt: stringOrNull(row.message_at),
   };
 }
 
@@ -259,4 +275,120 @@ function numberOrNull(value: unknown): number | null {
 
 function numberOrZero(value: unknown): number {
   return numberOrNull(value) ?? 0;
+}
+
+async function enrichTraceSummariesWithConversationContext(
+  projectId: string,
+  items: TraceSummary[],
+): Promise<TraceSummary[]> {
+  if (items.length === 0) return items;
+
+  const result = await clickhouse.query({
+    query:
+      "SELECT trace_id, input " +
+      "FROM spans " +
+      "WHERE project_id = {projectId:String} " +
+      "AND kind = 'agent' " +
+      "AND name = 'agent.run' " +
+      "AND has({traceIds:Array(String)}, trace_id) " +
+      "ORDER BY trace_id ASC, start_time ASC " +
+      "LIMIT 1 BY trace_id",
+    query_params: {
+      projectId,
+      traceIds: items.map((item) => item.traceId),
+    },
+    format: "JSONEachRow",
+  });
+
+  const rows = (await result.json()) as Array<Record<string, unknown>>;
+  const contextByTraceId = new Map<string, ConversationContext>(
+    rows.map((row) => [String(row.trace_id), extractConversationContextFromInput(row.input)]),
+  );
+
+  return items.map((item) => ({
+    ...item,
+    ...(contextByTraceId.get(item.traceId) ?? emptyConversationContext()),
+  }));
+}
+
+function extractConversationContextFromSpanRows(
+  rows: Array<Record<string, unknown>>,
+): ConversationContext {
+  for (const row of rows) {
+    if (String(row.kind) !== "agent" || String(row.name) !== "agent.run") continue;
+    return extractConversationContextFromInput(row.input);
+  }
+
+  return emptyConversationContext();
+}
+
+function extractConversationContextFromInput(value: unknown): ConversationContext {
+  const payload = parseJsonColumn(value);
+  if (!payload || typeof payload !== "object") return emptyConversationContext();
+
+  const prompt = (payload as Record<string, unknown>).prompt;
+  if (typeof prompt !== "string" || prompt.length === 0) {
+    return emptyConversationContext();
+  }
+
+  return {
+    conversationPreview: extractConversationPreview(prompt),
+    senderName:
+      matchJsonString(prompt, "sender") ??
+      matchJsonString(prompt, "name") ??
+      null,
+    messageAt: matchJsonString(prompt, "timestamp"),
+  };
+}
+
+function extractConversationPreview(prompt: string): string | null {
+  const normalized = prompt.replace(/\r\n/g, "\n").trim();
+  const lastFence = normalized.lastIndexOf("```");
+  if (lastFence !== -1) {
+    const tail = normalized
+      .slice(lastFence + 3)
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (tail) return truncatePreview(tail);
+  }
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (
+      line.startsWith("```") ||
+      line.startsWith("{") ||
+      line.startsWith("}") ||
+      line.includes("Conversation info") ||
+      line.includes("Sender (")
+    ) {
+      continue;
+    }
+    return truncatePreview(line);
+  }
+
+  return null;
+}
+
+function matchJsonString(source: string, key: string): string | null {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = source.match(new RegExp(`"${escapedKey}"\\s*:\\s*"([^"]+)"`));
+  return match?.[1]?.trim() ? match[1].trim() : null;
+}
+
+function truncatePreview(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 140 ? `${compact.slice(0, 137)}...` : compact;
+}
+
+function emptyConversationContext(): ConversationContext {
+  return {
+    conversationPreview: null,
+    senderName: null,
+    messageAt: null,
+  };
 }

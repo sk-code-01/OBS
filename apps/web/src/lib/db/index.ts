@@ -21,9 +21,7 @@ export function getSql(): postgres.Sql {
   if (globalThis.__clawobsPostgresClient) return globalThis.__clawobsPostgresClient;
 
   const client = createSqlClient();
-  if (process.env.NODE_ENV !== "production") {
-    globalThis.__clawobsPostgresClient = client;
-  }
+  globalThis.__clawobsPostgresClient = client;
   return client;
 }
 
@@ -31,9 +29,7 @@ export function getDb(): ReturnType<typeof drizzle> {
   if (globalThis.__clawobsDb) return globalThis.__clawobsDb;
 
   const database = drizzle(getSql(), { schema });
-  if (process.env.NODE_ENV !== "production") {
-    globalThis.__clawobsDb = database;
-  }
+  globalThis.__clawobsDb = database;
   return database;
 }
 

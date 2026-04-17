@@ -18,14 +18,18 @@ export default async function TraceDetailPage({
 
   if (!trace.trace) notFound();
 
+  const title = trace.trace.conversationPreview ?? `Trace ${trace.trace.traceId}`;
+  const contextLine = [trace.trace.senderName, trace.trace.messageAt].filter(Boolean).join(" • ");
+
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="break-all">Trace {trace.trace.traceId}</CardTitle>
+          <CardTitle className="break-words">{title}</CardTitle>
           <p className="mt-2 text-sm text-muted-foreground">
-            Started {trace.trace.startedAt} • session {trace.trace.sessionId ?? "—"}
+            {contextLine || `Started ${trace.trace.startedAt}`} • session {trace.trace.sessionId ?? "—"}
           </p>
+          <p className="mt-1 font-mono text-xs text-muted-foreground/80">{trace.trace.traceId}</p>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-4">
           {[
