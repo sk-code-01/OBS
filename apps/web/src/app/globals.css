@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 42 43% 97%;
+  --foreground: 176 33% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 176 33% 11%;
+  --muted: 150 26% 92%;
+  --muted-foreground: 173 11% 36%;
+  --accent: 34 100% 79%;
+  --accent-foreground: 176 44% 11%;
+  --primary: 169 76% 24%;
+  --primary-foreground: 42 43% 97%;
+  --danger: 4 78% 57%;
+  --danger-foreground: 0 0% 100%;
+  --border: 164 16% 82%;
+  --input: 164 16% 82%;
+  --ring: 169 76% 24%;
+}
+
+* {
+  @apply border-border;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(151, 255, 212, 0.28), transparent 34%),
+    radial-gradient(circle at top right, rgba(255, 181, 102, 0.18), transparent 24%),
+    linear-gradient(180deg, #fffdf8 0%, #f5fbf8 100%);
+}
+
+a {
+  @apply text-primary transition-colors hover:text-foreground;
+}
+
+::selection {
+  background: rgba(255, 181, 102, 0.55);
+  color: #052222;
+}

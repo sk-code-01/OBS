@@ -29,7 +29,7 @@ export function createApiKeyAuth(client: ClickHouseClient, ttlMs: number): ApiKe
       const hash = createHash("sha256").update(token).digest("hex");
       const result = await client.query({
         query:
-          "SELECT toString(project_id) AS project_id FROM api_keys " +
+          "SELECT toString(project_id) AS project_id FROM api_keys FINAL " +
           "WHERE key_hash = {hash:String} AND revoked_at IS NULL LIMIT 1",
         query_params: { hash },
         format: "JSONEachRow",

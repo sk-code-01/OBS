@@ -1,9 +1,21 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": [
+    "DATABASE_URL",
+    "RESEND_API_KEY",
+    "SESSION_COOKIE_SECRET",
+    "FIRST_KEY_COOKIE_SECRET",
+    "CLICKHOUSE_URL",
+    "CLICKHOUSE_DB",
+    "CLICKHOUSE_USER",
+    "CLICKHOUSE_PASSWORD",
+    "PUBLIC_INGEST_URL",
+    "PUBLIC_APP_URL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**", ".next/**"]
     },
     "dev": {
       "cache": false,
