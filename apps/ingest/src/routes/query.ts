@@ -211,7 +211,8 @@ export async function registerQueryRoutes(
           "cost_usd, tool_name, input, output, metadata, error " +
           "FROM spans " +
           "WHERE project_id = {projectId:String} AND trace_id = {traceId:String} " +
-          "ORDER BY start_time ASC, span_id ASC",
+          "ORDER BY start_time ASC, span_id ASC " +
+          "LIMIT 1 BY span_id",
         query_params: { projectId, traceId: req.params.traceId },
         format: "JSONEachRow",
       });
