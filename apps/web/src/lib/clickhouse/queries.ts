@@ -293,13 +293,12 @@ async function enrichTraceSummariesWithConversationContext(
 
   const result = await clickhouse.query({
     query:
-      "SELECT trace_id, input " +
+      "SELECT trace_id, kind, name, input " +
       "FROM spans " +
       "WHERE project_id = {projectId:String} " +
-      "AND kind = 'agent' " +
-      "AND name = 'agent.run' " +
       "AND has({traceIds:Array(String)}, trace_id) " +
-      "ORDER BY trace_id ASC, start_time ASC " +
+      "AND ((kind = 'agent' AND name = 'agent.run') OR kind = 'llm') " +
+      "ORDER BY trace_id ASC, if(kind = 'agent' AND name = 'agent.run', 0, 1) ASC, start_time ASC " +
       "LIMIT 1 BY trace_id",
     query_params: {
       projectId,
@@ -323,8 +322,14 @@ function extractConversationContextFromSpanRows(
   rows: Array<Record<string, unknown>>,
 ): ConversationContext {
   for (const row of rows) {
-    if (String(row.kind) !== "agent" || String(row.name) !== "agent.run") continue;
-    return extractConversationContextFromInput(row.input);
+    if (!isPreferredConversationContextRow(row)) continue;
+    const context = extractConversationContextFromInput(row.input);
+    if (hasConversationContext(context)) return context;
+  }
+
+  for (const row of rows) {
+    const context = extractConversationContextFromInput(row.input);
+    if (hasConversationContext(context)) return context;
   }
 
   return emptyConversationContext();
@@ -401,6 +406,22 @@ function emptyConversationContext(): ConversationContext {
     messageAt: null,
     isInternal: false,
   };
+}
+
+function isPreferredConversationContextRow(row: Record<string, unknown>): boolean {
+  return (
+    (String(row.kind) === "agent" && String(row.name) === "agent.run") ||
+    String(row.kind) === "llm"
+  );
+}
+
+function hasConversationContext(context: ConversationContext): boolean {
+  return Boolean(
+    context.conversationPreview ||
+      context.senderName ||
+      context.messageAt ||
+      context.isInternal,
+  );
 }
 
 function isInternalConversationPrompt(prompt: string): boolean {
