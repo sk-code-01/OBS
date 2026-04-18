@@ -86,7 +86,25 @@ interface ConversationContext {
   conversationPreview: string | null;
   senderName: string | null;
   messageAt: string | null;
+  isInternal: boolean;
 }
+
+const TRACE_SUMMARY_INNER_QUERY =
+  "SELECT " +
+  "trace_id, " +
+  "argMax(ifNull(session_id, ''), if(kind = 'agent', 3, if(kind = 'channel' AND name = 'message.received', 2, if(isNotNull(session_id) AND session_id != '', 1, 0)))) AS session_id, " +
+  "min(start_time) AS started_at_ts, " +
+  "maxOrNull(end_time) AS ended_at_ts, " +
+  "argMax(status, if(kind = 'agent', 3, if(kind = 'channel' AND name = 'message.received', 2, if(status != '', 1, 0)))) AS status, " +
+  "countIf(kind = 'agent' AND name = 'agent.run') AS agent_run_count, " +
+  "countIf(kind = 'llm') AS llm_call_count, " +
+  "countIf(kind = 'tool') AS tool_call_count, " +
+  "sumOrNull(total_tokens) AS total_tokens, " +
+  "sumOrNull(cost_usd) AS total_cost_usd, " +
+  "countIf(kind = 'channel' AND name = 'message.received') AS channel_message_count " +
+  "FROM spans " +
+  "WHERE project_id = {projectId:String} " +
+  "GROUP BY trace_id";
 
 export async function registerQueryRoutes(
   app: FastifyInstance,
@@ -119,8 +137,7 @@ export async function registerQueryRoutes(
       }
 
       const filters = [
-        "project_id = {projectId:String}",
-        "(status != '' OR llm_call_count > 0 OR tool_call_count > 0)",
+        "(agent_run_count > 0 OR llm_call_count > 0 OR tool_call_count > 0 OR channel_message_count > 0)",
       ];
       const queryParams: Record<string, string | number> = {
         projectId,
@@ -128,7 +145,7 @@ export async function registerQueryRoutes(
       };
 
       if (req.query.before) {
-        filters.push("started_at < parseDateTime64BestEffort({before:String})");
+        filters.push("started_at_ts < parseDateTime64BestEffort({before:String})");
         queryParams.before = req.query.before;
       }
       if (req.query.sessionId) {
@@ -145,26 +162,29 @@ export async function registerQueryRoutes(
           "SELECT " +
           "trace_id, " +
           "nullIf(session_id, '') AS session_id, " +
-          "toString(started_at) AS started_at, " +
-          "if(isNull(ended_at), NULL, toString(ended_at)) AS ended_at, " +
+          "toString(started_at_ts) AS started_at, " +
+          "if(isNull(ended_at_ts), NULL, toString(ended_at_ts)) AS ended_at, " +
           "nullIf(status, '') AS status, " +
           "llm_call_count, " +
           "tool_call_count, " +
           "total_tokens, " +
           "total_cost_usd " +
-          "FROM trace_summary_mv FINAL " +
+          `FROM (${TRACE_SUMMARY_INNER_QUERY}) ` +
           `WHERE ${filters.join(" AND ")} ` +
-          "ORDER BY started_at DESC " +
+          "ORDER BY started_at_ts DESC " +
           "LIMIT {limit:UInt32}",
         query_params: queryParams,
         format: "JSONEachRow",
       });
       const rows = (await result.json()) as Array<Record<string, unknown>>;
-      const items = await enrichTraceSummariesWithConversationContext(
+      const enriched = await enrichTraceSummariesWithConversationContext(
         deps.clickhouse,
         projectId,
         rows.map(mapTraceSummaryRow),
       );
+      const items = enriched
+        .filter((item) => !(item as ReturnType<typeof mapTraceSummaryRow> & { isInternal?: boolean }).isInternal)
+        .map(stripInternalFlag);
 
       return {
         items,
@@ -199,15 +219,15 @@ export async function registerQueryRoutes(
           "SELECT " +
           "trace_id, " +
           "nullIf(session_id, '') AS session_id, " +
-          "toString(started_at) AS started_at, " +
-          "if(isNull(ended_at), NULL, toString(ended_at)) AS ended_at, " +
+          "toString(started_at_ts) AS started_at, " +
+          "if(isNull(ended_at_ts), NULL, toString(ended_at_ts)) AS ended_at, " +
           "nullIf(status, '') AS status, " +
           "llm_call_count, " +
           "tool_call_count, " +
           "total_tokens, " +
           "total_cost_usd " +
-          "FROM trace_summary_mv FINAL " +
-          "WHERE project_id = {projectId:String} AND trace_id = {traceId:String} " +
+          `FROM (${TRACE_SUMMARY_INNER_QUERY}) ` +
+          "WHERE trace_id = {traceId:String} " +
           "LIMIT 1",
         query_params: { projectId, traceId: req.params.traceId },
         format: "JSONEachRow",
@@ -234,7 +254,7 @@ export async function registerQueryRoutes(
 
       return {
         trace: traceRows[0]
-          ? { ...mapTraceSummaryRow(traceRows[0]), ...conversationContext }
+          ? stripInternalFlag({ ...mapTraceSummaryRow(traceRows[0]), ...conversationContext })
           : null,
         spans: spanRows.map(mapSpanRow),
       };
@@ -263,8 +283,7 @@ export async function registerQueryRoutes(
       }
 
       const filters = [
-        "project_id = {projectId:String}",
-        "(status != '' OR llm_call_count > 0 OR tool_call_count > 0)",
+        "(agent_run_count > 0 OR llm_call_count > 0 OR tool_call_count > 0 OR channel_message_count > 0)",
       ];
       const queryParams: Record<string, string> = { projectId };
       if (req.query.from) {
@@ -284,9 +303,9 @@ export async function registerQueryRoutes(
           "sum(tool_call_count) AS tool_call_count_total, " +
           "sumOrNull(total_tokens) AS total_tokens_sum, " +
           "sumOrNull(total_cost_usd) AS total_cost_usd_sum, " +
-          "avgIf(dateDiff('millisecond', started_at, ended_at), isNotNull(ended_at)) AS avg_duration_ms, " +
-          "quantileIf(0.95)(dateDiff('millisecond', started_at, ended_at), isNotNull(ended_at)) AS p95_duration_ms " +
-          "FROM trace_summary_mv FINAL " +
+          "avgIf(dateDiff('millisecond', started_at_ts, ended_at_ts), isNotNull(ended_at_ts)) AS avg_duration_ms, " +
+          "quantileIf(0.95)(dateDiff('millisecond', started_at_ts, ended_at_ts), isNotNull(ended_at_ts)) AS p95_duration_ms " +
+          `FROM (${TRACE_SUMMARY_INNER_QUERY}) ` +
           `WHERE ${filters.join(" AND ")}`,
         query_params: queryParams,
         format: "JSONEachRow",
@@ -448,6 +467,7 @@ function extractConversationContextFromInput(value: unknown): ConversationContex
       directString(record.timestamp) ??
       directString(record.messageAt) ??
       matchJsonString(prompt, "timestamp"),
+    isInternal: isInternalConversationPrompt(prompt),
   };
 }
 
@@ -500,6 +520,7 @@ function emptyConversationContext(): ConversationContext {
     conversationPreview: null,
     senderName: null,
     messageAt: null,
+    isInternal: false,
   };
 }
 
@@ -512,5 +533,19 @@ function isPreferredConversationContextRow(row: Record<string, unknown>): boolea
 }
 
 function hasConversationContext(context: ConversationContext): boolean {
-  return Boolean(context.conversationPreview || context.senderName || context.messageAt);
+  return Boolean(
+    context.conversationPreview || context.senderName || context.messageAt || context.isInternal,
+  );
+}
+
+function isInternalConversationPrompt(prompt: string): boolean {
+  const normalized = prompt.trim();
+  return normalized.startsWith("Read HEARTBEAT.md if it exists");
+}
+
+function stripInternalFlag(
+  trace: ReturnType<typeof mapTraceSummaryRow> & { isInternal?: boolean },
+): ReturnType<typeof mapTraceSummaryRow> {
+  const { isInternal: _isInternal, ...rest } = trace;
+  return rest;
 }
