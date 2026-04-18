@@ -109,6 +109,32 @@ interface SessionEndEvent {
   nextSessionKey?: string;
 }
 
+interface BeforeDispatchEvent {
+  content: string;
+  body?: string;
+  channel?: string;
+  sessionKey?: string;
+  senderId?: string;
+  isGroup?: boolean;
+  timestamp?: number;
+}
+
+interface BeforeDispatchContext {
+  channelId?: string;
+  accountId?: string;
+  conversationId?: string;
+  sessionKey?: string;
+  senderId?: string;
+}
+
+interface PendingInboundTurn {
+  traceId: string;
+  sessionKey: string;
+  startTime: string;
+  content: string;
+  metadata: Record<string, unknown>;
+}
+
 interface ActiveAgentRun {
   traceId: string;
   spanId: string;
@@ -156,6 +182,7 @@ export class ClawObsRuntime {
   private readonly activeLlms = new Map<string, ActiveLlmCall[]>();
   private readonly activeToolsById = new Map<string, ActiveToolCall>();
   private readonly activeToolsByRun = new Map<string, ActiveToolCall[]>();
+  private readonly pendingInboundTurns = new Map<string, PendingInboundTurn[]>();
   private started = false;
   private disabledWarned = false;
 
@@ -191,24 +218,59 @@ export class ClawObsRuntime {
   onBeforeAgentStart(event: BeforeAgentStartEvent, ctx: AgentHookContext): void {
     const runKey = resolveRunKey(ctx);
     if (!runKey || !this.shouldTrackRun(runKey)) return;
-    if (this.activeAgents.has(runKey)) return;
-
-    const metadata = buildRunMetadata(ctx);
-    const input = this.config.captureInputs
+    const agent = this.ensureAgentRun(runKey, ctx);
+    agent.metadata = {
+      ...agent.metadata,
+      ...buildRunMetadata(ctx),
+    };
+    agent.input = this.config.captureInputs
       ? sanitizeForTelemetry(
           this.config.captureMessages
             ? { prompt: event.prompt, messages: event.messages }
             : { prompt: event.prompt },
         )
       : undefined;
+  }
 
-    this.activeAgents.set(runKey, {
-      traceId: traceIdFromRun(runKey),
+  onBeforeDispatch(event: BeforeDispatchEvent, ctx: BeforeDispatchContext): void {
+    if (!this.sender) return;
+
+    const content = event.content.trim();
+    if (!content || isInternalDispatchContent(content)) return;
+
+    const sessionKey = event.sessionKey?.trim() || ctx.sessionKey?.trim();
+    const startTime = isoFromEventTimestamp(event.timestamp) ?? nowIso();
+    const metadata = buildDispatchMetadata(event, ctx);
+    const pending: PendingInboundTurn | null = sessionKey
+      ? {
+          traceId: traceIdFromDispatch(sessionKey, event.timestamp, content),
+          sessionKey,
+          startTime,
+          content,
+          metadata,
+        }
+      : null;
+
+    if (pending) {
+      const queue = this.pendingInboundTurns.get(pending.sessionKey) ?? [];
+      queue.push(pending);
+      this.pendingInboundTurns.set(pending.sessionKey, queue);
+    }
+
+    this.emitSpan({
+      traceId: pending?.traceId ?? traceIdFromDispatch(ctx.channelId ?? "channel", event.timestamp, content),
       spanId: makeSpanId(),
-      sessionId: normalizeId(ctx.sessionId, "session"),
-      agentId: normalizeId(ctx.agentId, "agent"),
-      startTime: nowIso(),
-      input,
+      kind: "channel",
+      name: "message.received",
+      status: "ok",
+      startTime,
+      endTime: startTime,
+      input: this.config.captureInputs
+        ? sanitizeForTelemetry({
+            prompt: content,
+            timestamp: startTime,
+          })
+        : undefined,
       metadata,
     });
   }
@@ -512,16 +574,36 @@ export class ClawObsRuntime {
     const existing = this.activeAgents.get(runKey);
     if (existing) return existing;
 
+    const pendingInbound =
+      ctx.sessionKey ? this.takePendingInboundTurn(ctx.sessionKey) : undefined;
+
     const created: ActiveAgentRun = {
-      traceId: traceIdFromRun(runKey),
+      traceId: pendingInbound?.traceId ?? traceIdFromRun(runKey),
       spanId: makeSpanId(),
       sessionId: normalizeId(ctx.sessionId, "session"),
       agentId: normalizeId(ctx.agentId, "agent"),
-      startTime,
-      metadata: buildRunMetadata(ctx),
+      startTime: pendingInbound?.startTime ?? startTime,
+      input:
+        pendingInbound && this.config.captureInputs && !this.config.captureMessages
+          ? sanitizeForTelemetry({ prompt: pendingInbound.content })
+          : undefined,
+      metadata: {
+        ...pendingInbound?.metadata,
+        ...buildRunMetadata(ctx),
+      },
     };
     this.activeAgents.set(runKey, created);
     return created;
+  }
+
+  private takePendingInboundTurn(sessionKey: string): PendingInboundTurn | undefined {
+    const key = sessionKey.trim();
+    if (!key) return undefined;
+    const queue = this.pendingInboundTurns.get(key) ?? [];
+    const pending = queue.shift();
+    if (queue.length > 0) this.pendingInboundTurns.set(key, queue);
+    else this.pendingInboundTurns.delete(key);
+    return pending;
   }
 
   private takeToolCall(runKey: string, toolCallId?: string): ActiveToolCall | undefined {
@@ -712,6 +794,26 @@ function buildToolMetadata(ctx: {
   ) as Record<string, unknown>;
 }
 
+function buildDispatchMetadata(
+  event: BeforeDispatchEvent,
+  ctx: BeforeDispatchContext,
+): Record<string, unknown> {
+  return sanitizeForTelemetry(
+    compactObject({
+      source: "openclaw",
+      origin: "before_dispatch",
+      channel: event.channel,
+      channelId: ctx.channelId,
+      accountId: ctx.accountId,
+      conversationId: ctx.conversationId,
+      sessionKey: event.sessionKey ?? ctx.sessionKey,
+      senderId: event.senderId ?? ctx.senderId,
+      isGroup: event.isGroup,
+      timestamp: isoFromEventTimestamp(event.timestamp),
+    }),
+  ) as Record<string, unknown>;
+}
+
 function compactObject(record: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(record).filter(([, value]) => value !== undefined && value !== null && value !== ""),
@@ -738,6 +840,10 @@ function traceIdFromSession(sessionId: string): string {
   return normalizeId(`session:${sessionId}`, "session-trace") ?? `session_${digest(sessionId)}`;
 }
 
+function traceIdFromDispatch(sessionKey: string, timestamp: number | undefined, content: string): string {
+  return `msg_${digest(`${sessionKey}:${timestamp ?? ""}:${content}`)}`;
+}
+
 function normalizeId(value: string | undefined, prefix: string): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
@@ -756,6 +862,18 @@ function digest(value: string): string {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function isoFromEventTimestamp(timestamp: number | undefined): string | undefined {
+  if (!Number.isFinite(timestamp)) return undefined;
+  const normalized =
+    timestamp! > 1_000_000_000_000 ? timestamp! : timestamp! > 1_000_000_000 ? timestamp! * 1_000 : NaN;
+  if (!Number.isFinite(normalized)) return undefined;
+  return new Date(normalized).toISOString();
+}
+
+function isInternalDispatchContent(content: string): boolean {
+  return content.trim().startsWith("Read HEARTBEAT.md if it exists");
 }
 
 function isoFromDuration(durationMs: number | undefined, endIso: string): string {

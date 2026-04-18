@@ -39,6 +39,9 @@ export default definePluginEntry({
     api.on("session_end", (event, ctx) => {
       runtime.onSessionEnd(event, ctx);
     });
+    api.on("before_dispatch", (event, ctx) => {
+      runtime.onBeforeDispatch(event, ctx);
+    });
   },
 });
 

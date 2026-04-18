@@ -17,7 +17,7 @@ export interface EnabledClawObsPluginConfig extends ClawObsPluginConfig {
   apiKey: string;
 }
 
-export const DEFAULT_SDK_VERSION = "clawobs-openclaw/0.1.0";
+export const DEFAULT_SDK_VERSION = "clawobs-openclaw/0.1.2";
 
 function readString(
   source: Record<string, unknown> | undefined,

@@ -223,4 +223,138 @@ describe("ClawObsRuntime", () => {
     expect(payload.spans.map((span) => span.name)).toEqual(["session.start", "session.end"]);
     expect(payload.spans.every((span) => span.kind === "custom")).toBe(true);
   });
+
+  it("anchors message traces from before_dispatch and reuses them for llm-only runs", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = new ClawObsRuntime({
+      config: createConfig(),
+      logger: createLogger(),
+    });
+
+    runtime.start();
+    runtime.onBeforeDispatch(
+      {
+        content: "What is your height bro",
+        channel: "telegram",
+        sessionKey: "agent:main:telegram-session",
+        senderId: "6342720482",
+        timestamp: 1_776_519_000_000,
+      },
+      {
+        channelId: "telegram",
+        conversationId: "chat-1",
+        sessionKey: "agent:main:telegram-session",
+        senderId: "6342720482",
+      },
+    );
+    runtime.onLlmInput(
+      {
+        runId: "run-height",
+        sessionId: "telegram-session",
+        provider: "openrouter",
+        model: "minimax/m2.7",
+        prompt: "What is your height bro",
+        historyMessages: [],
+        imagesCount: 0,
+      },
+      {
+        runId: "run-height",
+        sessionId: "telegram-session",
+        sessionKey: "agent:main:telegram-session",
+        channelId: "telegram",
+        trigger: "message",
+      },
+    );
+    runtime.onLlmOutput(
+      {
+        runId: "run-height",
+        sessionId: "telegram-session",
+        provider: "openrouter",
+        model: "minimax/m2.7",
+        assistantTexts: ["I'm an AI, I don't have a height."],
+      },
+      {
+        runId: "run-height",
+        sessionId: "telegram-session",
+        sessionKey: "agent:main:telegram-session",
+        channelId: "telegram",
+        trigger: "message",
+      },
+    );
+    runtime.onAgentEnd(
+      {
+        messages: [
+          { role: "user", content: "What is your height bro" },
+          { role: "assistant", content: "I'm an AI, I don't have a height." },
+        ],
+        success: true,
+      },
+      {
+        runId: "run-height",
+        sessionId: "telegram-session",
+        sessionKey: "agent:main:telegram-session",
+        channelId: "telegram",
+        trigger: "message",
+      },
+    );
+
+    await runtime.stop();
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      spans: Array<Record<string, unknown>>;
+    };
+
+    expect(payload.spans).toHaveLength(3);
+    const traceIds = new Set(payload.spans.map((span) => span.traceId));
+    expect(traceIds.size).toBe(1);
+    expect(payload.spans.map((span) => span.name)).toEqual(
+      expect.arrayContaining(["message.received", "agent.run"]),
+    );
+  });
+
+  it("emits a standalone inbound message trace when no agent hooks follow", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = new ClawObsRuntime({
+      config: createConfig(),
+      logger: createLogger(),
+    });
+
+    runtime.start();
+    runtime.onBeforeDispatch(
+      {
+        content: "hello from telegram",
+        channel: "telegram",
+        sessionKey: "agent:main:telegram-session",
+        senderId: "user-1",
+        timestamp: 1_776_519_100_000,
+      },
+      {
+        channelId: "telegram",
+        conversationId: "chat-1",
+        sessionKey: "agent:main:telegram-session",
+        senderId: "user-1",
+      },
+    );
+
+    await runtime.stop();
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      spans: Array<Record<string, unknown>>;
+    };
+    expect(payload.spans).toHaveLength(1);
+    expect(payload.spans[0]?.name).toBe("message.received");
+    expect(payload.spans[0]?.kind).toBe("channel");
+  });
 });

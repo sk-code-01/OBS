@@ -360,6 +360,10 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function directString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function numberOrNull(value: unknown): number | null {
   if (value == null || value === "") return null;
   const n = typeof value === "number" ? value : Number(value);
@@ -383,8 +387,8 @@ async function enrichTraceSummariesWithConversationContext(
       "FROM spans " +
       "WHERE project_id = {projectId:String} " +
       "AND has({traceIds:Array(String)}, trace_id) " +
-      "AND ((kind = 'agent' AND name = 'agent.run') OR kind = 'llm') " +
-      "ORDER BY trace_id ASC, if(kind = 'agent' AND name = 'agent.run', 0, 1) ASC, start_time ASC " +
+      "AND ((kind = 'agent' AND name = 'agent.run') OR kind = 'llm' OR (kind = 'channel' AND name = 'message.received')) " +
+      "ORDER BY trace_id ASC, if(kind = 'agent' AND name = 'agent.run', 0, if(kind = 'llm', 1, 2)) ASC, start_time ASC " +
       "LIMIT 1 BY trace_id",
     query_params: {
       projectId,
@@ -425,7 +429,8 @@ function extractConversationContextFromInput(value: unknown): ConversationContex
   const payload = parseJsonColumn(value);
   if (!payload || typeof payload !== "object") return emptyConversationContext();
 
-  const prompt = (payload as Record<string, unknown>).prompt;
+  const record = payload as Record<string, unknown>;
+  const prompt = record.prompt;
   if (typeof prompt !== "string" || prompt.length === 0) {
     return emptyConversationContext();
   }
@@ -433,10 +438,16 @@ function extractConversationContextFromInput(value: unknown): ConversationContex
   return {
     conversationPreview: extractConversationPreview(prompt),
     senderName:
+      directString(record.sender) ??
+      directString(record.senderName) ??
+      directString(record.name) ??
       matchJsonString(prompt, "sender") ??
       matchJsonString(prompt, "name") ??
       null,
-    messageAt: matchJsonString(prompt, "timestamp"),
+    messageAt:
+      directString(record.timestamp) ??
+      directString(record.messageAt) ??
+      matchJsonString(prompt, "timestamp"),
   };
 }
 
@@ -495,7 +506,8 @@ function emptyConversationContext(): ConversationContext {
 function isPreferredConversationContextRow(row: Record<string, unknown>): boolean {
   return (
     (String(row.kind) === "agent" && String(row.name) === "agent.run") ||
-    String(row.kind) === "llm"
+    String(row.kind) === "llm" ||
+    (String(row.kind) === "channel" && String(row.name) === "message.received")
   );
 }
 
