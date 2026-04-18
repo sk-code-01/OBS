@@ -63,19 +63,22 @@ interface ConversationContext {
   conversationPreview: string | null;
   senderName: string | null;
   messageAt: string | null;
+  isInternal: boolean;
 }
 
 export async function listTraces(
   projectId: string,
   params: TraceListParams = {},
 ): Promise<{ items: TraceSummary[]; nextCursor: string | null }> {
+  const requestedLimit = params.limit ?? 50;
+  const fetchLimit = Math.min(requestedLimit * 5, 200);
   const filters = [
     "project_id = {projectId:String}",
     "(status != '' OR llm_call_count > 0 OR tool_call_count > 0)",
   ];
   const queryParams: Record<string, string | number> = {
     projectId,
-    limit: params.limit ?? 50,
+    limit: fetchLimit,
   };
 
   if (params.before) {
@@ -112,13 +115,16 @@ export async function listTraces(
   });
 
   const rows = (await result.json()) as Array<Record<string, unknown>>;
-  const items = await enrichTraceSummariesWithConversationContext(
+  const enrichedItems = await enrichTraceSummariesWithConversationContext(
     projectId,
     rows.map(mapTraceSummaryRow),
   );
+  const items = enrichedItems
+    .filter((item) => !(item as TraceSummary & { isInternal?: boolean }).isInternal)
+    .slice(0, requestedLimit);
   return {
-    items,
-    nextCursor: items.length === (params.limit ?? 50) ? items.at(-1)?.startedAt ?? null : null,
+    items: items.map(stripInternalFlag),
+    nextCursor: items.length === requestedLimit ? items.at(-1)?.startedAt ?? null : null,
   };
 }
 
@@ -162,7 +168,9 @@ export async function getTrace(projectId: string, traceId: string): Promise<Trac
   const spanRows = (await spansResult.json()) as Array<Record<string, unknown>>;
   const conversationContext = extractConversationContextFromSpanRows(spanRows);
   return {
-    trace: traceRows[0] ? { ...mapTraceSummaryRow(traceRows[0]), ...conversationContext } : null,
+    trace: traceRows[0]
+      ? stripInternalFlag({ ...mapTraceSummaryRow(traceRows[0]), ...conversationContext })
+      : null,
     spans: spanRows.map(mapSpanRow),
   };
 }
@@ -280,8 +288,8 @@ function numberOrZero(value: unknown): number {
 async function enrichTraceSummariesWithConversationContext(
   projectId: string,
   items: TraceSummary[],
-): Promise<TraceSummary[]> {
-  if (items.length === 0) return items;
+): Promise<Array<TraceSummary & { isInternal: boolean }>> {
+  if (items.length === 0) return [];
 
   const result = await clickhouse.query({
     query:
@@ -338,6 +346,7 @@ function extractConversationContextFromInput(value: unknown): ConversationContex
       matchJsonString(prompt, "name") ??
       null,
     messageAt: matchJsonString(prompt, "timestamp"),
+    isInternal: isInternalConversationPrompt(prompt),
   };
 }
 
@@ -390,5 +399,18 @@ function emptyConversationContext(): ConversationContext {
     conversationPreview: null,
     senderName: null,
     messageAt: null,
+    isInternal: false,
   };
+}
+
+function isInternalConversationPrompt(prompt: string): boolean {
+  const normalized = prompt.trim();
+  return normalized.startsWith("Read HEARTBEAT.md if it exists");
+}
+
+function stripInternalFlag(
+  trace: TraceSummary & { isInternal?: boolean },
+): TraceSummary {
+  const { isInternal: _isInternal, ...rest } = trace;
+  return rest;
 }
